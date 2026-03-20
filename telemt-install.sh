@@ -1,0 +1,158 @@
+#!/bin/bash
+
+set -e
+
+if [[ $EUID -ne 0 ]]; then
+    echo "This script must be run as root"
+    exit 1
+fi
+
+# Check and install required tools
+for tool in curl jq wget openssl; do
+    if ! command -v "$tool" &> /dev/null; then
+        echo "> Installing missing tools..."
+        apt update
+        apt install -y curl jq wget openssl
+        break
+    fi
+done
+
+GITHUB_USER_REPO="telemt/telemt"
+FIND_STR="telemt"
+DIST_DIR=/opt/telemt.dist
+TLS_DOMAIN=petrovich.ru
+
+echo "> Searching latest release on GitHub..."
+RELEASE_URL=`curl -Ls https://api.github.com/repos/${GITHUB_USER_REPO}/releases/latest | jq -r ".assets[] | select(.name | contains(\"${FIND_STR}\")).browser_download_url"`
+echo "> Release url: ${RELEASE_URL}. Downloading..."
+
+mkdir -p ${DIST_DIR}
+wget -qO ${DIST_DIR}/telemt ${RELEASE_URL}
+
+chown root:root ${DIST_DIR}/telemt
+chmod 755 ${DIST_DIR}/telemt
+mv ${DIST_DIR}/telemt /usr/local/bin
+
+KEY=$(openssl rand -hex 16)
+
+cat << EOT > /etc/telemt.toml
+# === General Settings ===
+[general]
+# prefer_ipv6 is deprecated; use [network].prefer instead
+prefer_ipv6 = false
+fast_mode = true
+use_middle_proxy = true
+#ad_tag = "00000000000000000000000000000000"
+
+[network]
+# Enable/disable families; ipv6 = true/false/auto(None)
+ipv4 = true
+ipv6 = true
+# prefer = 4 or 6
+prefer = 4
+multipath = false
+
+# Log level: debug | verbose | normal | silent
+# Can be overridden with --silent or --log-level CLI flags
+# RUST_LOG env var takes absolute priority over all of these
+log_level = "normal"
+
+[general.modes]
+classic = false
+secure = false
+tls = true
+
+# === Server Binding ===
+[server]
+port = 443
+listen_addr_ipv4 = "0.0.0.0"
+listen_addr_ipv6 = "::"
+# listen_unix_sock = "/var/run/telemt.sock" # Unix socket
+# listen_unix_sock_perm = "0666" # Socket file permissions
+# metrics_port = 9090
+# metrics_whitelist = ["127.0.0.1", "::1"]
+
+# Listen on multiple interfaces/IPs (overrides listen_addr_*)
+[[server.listeners]]
+ip = "0.0.0.0"
+# announce_ip = "1.2.3.4" # Optional: Public IP for tg:// links
+
+[[server.listeners]]
+ip = "::"
+
+# Users to show in the startup log (tg:// links)
+[general.links]
+show = ["hello"] # Users to show in the startup log (tg:// links)
+# public_host = "proxy.example.com"  # Host (IP or domain) for tg:// links
+# public_port = 443                  # Port for tg:// links (default: server.port)
+
+# === Timeouts (in seconds) ===
+[timeouts]
+client_handshake = 15
+tg_connect = 10
+client_keepalive = 60
+client_ack = 300
+
+# === Anti-Censorship & Masking ===
+[censorship]
+tls_domain = "$TLS_DOMAIN"
+mask = true
+mask_port = 443
+# mask_host = "petrovich.ru" # Defaults to tls_domain if not set
+# mask_unix_sock = "/var/run/nginx.sock" # Unix socket (mutually exclusive with mask_host)
+fake_cert_len = 2048
+
+# === Access Control & Users ===
+[access]
+replay_check_len = 65536
+replay_window_secs = 1800
+ignore_time_skew = false
+
+[access.users]
+# format: "username" = "32_hex_chars_secret"
+hello = "$KEY"
+
+# [access.user_max_tcp_conns]
+# hello = 50
+
+# [access.user_max_unique_ips]
+# hello = 5
+
+# [access.user_data_quota]
+# hello = 1073741824 # 1 GB
+
+# === Upstreams & Routing ===
+[[upstreams]]
+type = "direct"
+enabled = true
+weight = 10
+
+# [[upstreams]]
+# type = "socks5"
+# address = "127.0.0.1:1080"
+# enabled = false
+# weight = 1
+
+# === DC Address Overrides ===
+# [dc_overrides]
+# "203" = "91.105.192.100:443"
+EOT
+
+cat << EOT > /etc/systemd/system/telemt.service
+[Unit]
+Description=Telemt
+After=network.target
+[Service]
+Type=simple
+WorkingDirectory=/bin
+ExecStart=/usr/local/bin/telemt /etc/telemt.toml
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOT
+
+systemctl daemon-reload
+systemctl enable telemt
+systemctl start telemt
+sleep 1
+journalctl -n 50 | grep telemt
