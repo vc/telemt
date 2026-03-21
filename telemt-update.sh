@@ -28,7 +28,7 @@ if [[ -z "${RELEASE_URL}" ]] || [[ "${RELEASE_URL}" == "null" ]]; then
     echo "> ERROR: no release URL found for ${GITHUB_USER_REPO} with filter '${FIND_STR}'."
     exit 1
 else
-    echo "> Release url: ${RELEASE_URL}. Downloading..."
+    echo "> Release url: ${RELEASE_URL}"
 fi
 
 URL_VER="$(echo "${RELEASE_URL}" | grep -oP '(?<=download/)[0-9.]+')"
@@ -38,24 +38,53 @@ else
     echo "> Latest release version: unknown"
 fi
 
+# Get current version
 CURRENT_VER=$(telemt --version | awk '{print $2}')
 if [[ -z "${CURRENT_VER}" ]]; then
     echo "> ERROR: Unable to get current telemt version."
+    rm -rf ${TEMP_DIR}
     exit 1
 fi
 
+# Compare versions
 if [[ "${URL_VER}" == "${CURRENT_VER}" ]] || [[ "$(printf '%s\n%s' "${CURRENT_VER}" "${URL_VER}" | sort -V | head -n1)" == "${URL_VER}" ]]; then
     echo "> No update needed. Current version: ${CURRENT_VER}, Latest version: ${URL_VER}"
+    rm -rf ${TEMP_DIR}
     exit 0
 fi
+
+# Download to temp directory
+TEMP_DIR=$(mktemp -d)
+echo "> Downloading telemt to temp directory ${TEMP_DIR} ..."
+curl -Ls ${RELEASE_URL} | tar -xzf - -C ${TEMP_DIR}
+
+# Verify downloaded binary
+DOWNLOADED_VER=$(${TEMP_DIR}/telemt --version | awk '{print $2}')
+if [[ -z "${DOWNLOADED_VER}" ]]; then
+    echo "> ERROR: Unable to get version from downloaded telemt binary."
+    rm -rf ${TEMP_DIR}
+    exit 1
+fi
+
+if [[ "${DOWNLOADED_VER}" != "${URL_VER}" ]]; then
+    echo "> ERROR: Downloaded telemt version ${DOWNLOADED_VER} does not match expected ${URL_VER}."
+    rm -rf ${TEMP_DIR}
+    exit 1
+fi
+
+echo "> Downloaded telemt version verified: ${DOWNLOADED_VER}"
 
 echo "> Stopping telemt service"
 sudo systemctl stop telemt.service
 
-curl -Ls ${RELEASE_URL} | tar -xzf - -C ${INSTALL_DIR}
-
+# Move binary to install dir
+echo "> Installing telemt to ${INSTALL_DIR} ..."
+sudo mv ${TEMP_DIR}/telemt ${INSTALL_DIR}/telemt
 sudo chown root:root ${INSTALL_DIR}/telemt
 sudo chmod 755 ${INSTALL_DIR}/telemt
+
+# Clean up temp
+rm -rf ${TEMP_DIR}
 
 echo "> Starting telemt service"
 sudo systemctl start telemt.service
