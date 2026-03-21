@@ -7,6 +7,18 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# Parse command line arguments
+FORCE_UPDATE="false"
+for arg in "$@"; do
+    if [[ "${arg}" == "--force" ]]; then
+        FORCE_UPDATE="true"
+    fi
+done
+
+if [[ "${FORCE_UPDATE}" == "true" ]]; then
+    echo "> Force update enabled. Skipping version checks."
+fi
+
 for tool in curl jq tar; do
     if ! command -v "$tool" &> /dev/null; then
         echo "> Installing missing tools..."
@@ -39,18 +51,18 @@ else
 fi
 
 # Get current version
-CURRENT_VER=$(telemt --version | awk '{print $2}')
+CURRENT_VER=$(timeout 2 telemt --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 if [[ -z "${CURRENT_VER}" ]]; then
-    echo "> ERROR: Unable to get current telemt version."
-    rm -rf ${TEMP_DIR}
-    exit 1
+    echo "> WARNING: Unable to get current telemt version. Proceeding with update anyway."
 fi
 
-# Compare versions
-if [[ "${URL_VER}" == "${CURRENT_VER}" ]] || [[ "$(printf '%s\n%s' "${CURRENT_VER}" "${URL_VER}" | sort -V | head -n1)" == "${URL_VER}" ]]; then
-    echo "> No update needed. Current version: ${CURRENT_VER}, Latest version: ${URL_VER}"
-    rm -rf ${TEMP_DIR}
-    exit 0
+# Compare versions (only if current version is known and not forced)
+if [[ "${FORCE_UPDATE}" != "true" ]] && [[ -n "${CURRENT_VER}" ]]; then
+    if [[ "${URL_VER}" == "${CURRENT_VER}" ]] || [[ "$(printf '%s\n%s' "${CURRENT_VER}" "${URL_VER}" | sort -V | head -n1)" == "${URL_VER}" ]]; then
+        echo "> No update needed. Current version: ${CURRENT_VER}, Latest version: ${URL_VER}"
+        rm -rf ${TEMP_DIR}
+        exit 0
+    fi
 fi
 
 # Download to temp directory
