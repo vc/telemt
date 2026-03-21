@@ -99,11 +99,17 @@ sudo chmod 755 ${INSTALL_DIR}/telemt
 rm -rf ${TEMP_DIR}
 
 echo "> Starting telemt service"
-sudo systemctl start telemt.service
-sudo systemctl status telemt.service
-
-if curl -s --max-time 10 http://127.0.0.1:9091/v1/users | jq -r '.data[] | .username as $name | .links.tls[] | select(contains("::") | not) | "\($name): \(.)"'; then
-    echo "> Validation successful."
-else
-    echo "> WARNING: Validation failed. Check telemt service."
+if ! systemctl start telemt.service; then
+    echo "> ERROR: Failed to start telemt service."
+    echo "> Service status:"
+    systemctl status telemt.service || true
+    echo "> Recent logs:"
+    journalctl -u telemt.service -n 20 --no-pager || true
+    exit 1
 fi
+
+if ! curl -s --max-time 10 http://127.0.0.1:9091/v1/users | jq -r '.data[] | .username as $name | .links.tls[] | select(contains("::") | not) | "\($name): \(.)"' > /dev/null 2>&1; then
+    echo "> WARNING: Validation failed. Check telemt service."
+    
+fi
+

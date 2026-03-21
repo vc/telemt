@@ -103,7 +103,5 @@ EOT
 systemctl daemon-reload
 systemctl enable telemt
 systemctl start telemt
-sleep 1
-journalctl -n 50 | grep telemt
 
 curl -s http://127.0.0.1:9091/v1/users | jq -r '.data[] | .username as $name | .links.tls[] | select(contains("::") | not) | "\($name): \(.)"'
