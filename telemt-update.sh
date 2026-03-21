@@ -110,6 +110,5 @@ fi
 
 if ! curl -s --max-time 10 http://127.0.0.1:9091/v1/users | jq -r '.data[] | .username as $name | .links.tls[] | select(contains("::") | not) | "\($name): \(.)"' > /dev/null 2>&1; then
     echo "> WARNING: Validation failed. Check telemt service."
-    
 fi
 
