@@ -21,16 +21,9 @@ FIND_STR="telemt"
 ARCH_PATTERN=$(uname -m)
 INSTALL_DIR=/usr/local/bin
 
-if [[ -f ${DIST_DIR}/telemt ]] || [[ -d ${DIST_DIR}/telemt ]]
-then
-        echo "> ${DIST_DIR}/telemt EXISTS. Remove them..."
-        rm -rf ${DIST_DIR}/telemt
-fi
-
 echo "> Searching latest release on GitHub..."
-mkdir -p "${DIST_DIR}"
 RELEASE_URL=$(curl -sL "https://api.github.com/repos/${GITHUB_USER_REPO}/releases/latest" \
-    | jq -r ".assets[] | select(.name | contains(\"${FIND_STR}\") and contains(\"${ARCH_PATTERN}\") and contains(\".tar.gz\") and (contains(\".sha256\") | not)).browser_download_url")
+    | jq -r ".assets | map(select(.name | contains(\"${FIND_STR}\") and contains(\"${ARCH_PATTERN}\") and contains(\".tar.gz\") and (contains(\".sha256\") | not)).browser_download_url) | first")
 if [[ -z "${RELEASE_URL}" ]] || [[ "${RELEASE_URL}" == "null" ]]; then
     echo "> ERROR: no release URL found for ${GITHUB_USER_REPO} with filter '${FIND_STR}'."
     exit 1
@@ -38,9 +31,9 @@ else
     echo "> Release url: ${RELEASE_URL}. Downloading..."
 fi
 
-VER="$(echo "${RELEASE_URL}" | grep -oP '(?<=download/)[0-9.]+')"
-if [[ -n "${VER}" ]]; then
-    echo "> Latest release version: ${VER}"
+URL_VER="$(echo "${RELEASE_URL}" | grep -oP '(?<=download/)[0-9.]+')"
+if [[ -n "${URL_VER}" ]]; then
+    echo "> Latest release version: ${URL_VER}"
 else
     echo "> Latest release version: unknown"
 fi
