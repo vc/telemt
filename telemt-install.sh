@@ -7,146 +7,95 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# Check and install required tools
-for tool in curl jq wget openssl; do
+for tool in curl jq openssl tar; do
     if ! command -v "$tool" &> /dev/null; then
         echo "> Installing missing tools..."
         apt update
-        apt install -y curl jq wget openssl
+        apt install -y curl jq openssl tar
         break
     fi
 done
 
+INSTALL_DIR=/usr/local/bin
 GITHUB_USER_REPO="telemt/telemt"
 FIND_STR="telemt"
-DIST_DIR=/opt/telemt.dist
-TLS_DOMAIN=petrovich.ru
+ARCH_PATTERN=$(uname -m)
+TLS_DOMAIN=microsoft.com
 
-echo "> Searching latest release on GitHub..."
-RELEASE_URL=`curl -Ls https://api.github.com/repos/${GITHUB_USER_REPO}/releases/latest | jq -r ".assets[] | select(.name | contains(\"${FIND_STR}\")).browser_download_url"`
-echo "> Release url: ${RELEASE_URL}. Downloading..."
+echo "> Searching ${FIND_STR}/${ARCH_PATTERN} latest release on GitHub repo ${GITHUB_USER_REPO} ..."
+RELEASE_URL=$(curl -Ls https://api.github.com/repos/${GITHUB_USER_REPO}/releases/latest \
+    | jq -r ".assets[] | select(.name | contains(\"${FIND_STR}\") and contains(\"${ARCH_PATTERN}\") and contains(\".tar.gz\")).browser_download_url")
+if [[ -z "${RELEASE_URL}" ]] || [[ "${RELEASE_URL}" == "null" ]]; then
+    echo "> ERROR: no release URL found for ${GITHUB_USER_REPO} with filter '${FIND_STR}'."
+    exit 1
+else
+    echo "> Release url: ${RELEASE_URL}. Downloading..."
+fi
 
-mkdir -p ${DIST_DIR}
-wget -qO ${DIST_DIR}/telemt ${RELEASE_URL}
+if ! curl -Ls "${RELEASE_URL}" | tar -xzf - -C "${INSTALL_DIR}"; then
+    echo "> ERROR: Failed to download or extract the archive."
+    exit 1
+fi
 
-chown root:root ${DIST_DIR}/telemt
-chmod 755 ${DIST_DIR}/telemt
-mv ${DIST_DIR}/telemt /usr/local/bin
+if [ ! -f "${INSTALL_DIR}/telemt" ]; then
+    echo "> ERROR: telemt binary not found after extraction."
+    exit 1
+fi
 
-KEY=$(openssl rand -hex 16)
+chown root:root ${INSTALL_DIR}/telemt
+chmod 755 ${INSTALL_DIR}/telemt
 
 cat << EOT > /etc/telemt.toml
 # === General Settings ===
 [general]
-# prefer_ipv6 is deprecated; use [network].prefer instead
-prefer_ipv6 = false
-fast_mode = true
-use_middle_proxy = true
-#ad_tag = "00000000000000000000000000000000"
-
-[network]
-# Enable/disable families; ipv6 = true/false/auto(None)
-ipv4 = true
-ipv6 = true
-# prefer = 4 or 6
-prefer = 4
-multipath = false
-
-# Log level: debug | verbose | normal | silent
-# Can be overridden with --silent or --log-level CLI flags
-# RUST_LOG env var takes absolute priority over all of these
-log_level = "normal"
+# ad_tag = "00000000000000000000000000000000"
+use_middle_proxy = false
 
 [general.modes]
 classic = false
 secure = false
 tls = true
 
-# === Server Binding ===
 [server]
 port = 443
-listen_addr_ipv4 = "0.0.0.0"
-listen_addr_ipv6 = "::"
-# listen_unix_sock = "/var/run/telemt.sock" # Unix socket
-# listen_unix_sock_perm = "0666" # Socket file permissions
-# metrics_port = 9090
-# metrics_whitelist = ["127.0.0.1", "::1"]
 
-# Listen on multiple interfaces/IPs (overrides listen_addr_*)
-[[server.listeners]]
-ip = "0.0.0.0"
-# announce_ip = "1.2.3.4" # Optional: Public IP for tg:// links
-
-[[server.listeners]]
-ip = "::"
-
-# Users to show in the startup log (tg:// links)
-[general.links]
-show = ["hello"] # Users to show in the startup log (tg:// links)
-# public_host = "proxy.example.com"  # Host (IP or domain) for tg:// links
-# public_port = 443                  # Port for tg:// links (default: server.port)
-
-# === Timeouts (in seconds) ===
-[timeouts]
-client_handshake = 15
-tg_connect = 10
-client_keepalive = 60
-client_ack = 300
+[server.api]
+enabled = true
+# listen = "127.0.0.1:9091"
+# whitelist = ["127.0.0.1/32"]
+# read_only = true
 
 # === Anti-Censorship & Masking ===
 [censorship]
 tls_domain = "$TLS_DOMAIN"
-mask = true
-mask_port = 443
-# mask_host = "petrovich.ru" # Defaults to tls_domain if not set
-# mask_unix_sock = "/var/run/nginx.sock" # Unix socket (mutually exclusive with mask_host)
-fake_cert_len = 2048
-
-# === Access Control & Users ===
-[access]
-replay_check_len = 65536
-replay_window_secs = 1800
-ignore_time_skew = false
 
 [access.users]
 # format: "username" = "32_hex_chars_secret"
-hello = "$KEY"
-
-# [access.user_max_tcp_conns]
-# hello = 50
-
-# [access.user_max_unique_ips]
-# hello = 5
-
-# [access.user_data_quota]
-# hello = 1073741824 # 1 GB
-
-# === Upstreams & Routing ===
-[[upstreams]]
-type = "direct"
-enabled = true
-weight = 10
-
-# [[upstreams]]
-# type = "socks5"
-# address = "127.0.0.1:1080"
-# enabled = false
-# weight = 1
-
-# === DC Address Overrides ===
-# [dc_overrides]
-# "203" = "91.105.192.100:443"
+hello = "$(openssl rand -hex 16)"
+$(for i in {1..16}; do echo "user$i = \"$(openssl rand --hex 16)\""; done)
 EOT
+
+useradd -d /opt/telemt -m -r -U telemt
+chown -R telemt:telemt /etc/telemt
 
 cat << EOT > /etc/systemd/system/telemt.service
 [Unit]
 Description=Telemt
-After=network.target
+After=network-online.target
+Wants=network-online.target
+
 [Service]
 Type=simple
-WorkingDirectory=/bin
+User=telemt
+Group=telemt
+WorkingDirectory=/opt/telemt
 ExecStart=/usr/local/bin/telemt /etc/telemt.toml
 Restart=on-failure
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
 [Install]
 WantedBy=multi-user.target
 EOT
@@ -156,3 +105,5 @@ systemctl enable telemt
 systemctl start telemt
 sleep 1
 journalctl -n 50 | grep telemt
+
+curl -s http://127.0.0.1:9091/v1/users | jq -r '.data[] | .username as $name | .links.tls[] | select(contains("::") | not) | "\($name): \(.)"'
