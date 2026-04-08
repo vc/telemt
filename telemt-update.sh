@@ -54,6 +54,8 @@ fi
 CURRENT_VER=$(timeout 2 telemt --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 if [[ -z "${CURRENT_VER}" ]]; then
     echo "> WARNING: Unable to get current telemt version. Proceeding with update anyway."
+else
+    echo "> Current telemt version: ${CURRENT_VER}"
 fi
 
 # Compare versions (only if current version is known and not forced)
